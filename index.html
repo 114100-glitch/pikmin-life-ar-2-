@@ -1,0 +1,1108 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Pikmin Life AR</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1a3a1a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<style>
+  :root {
+    --green-dark: #1a3a1a;
+    --green-mid: #2d6a2d;
+    --green-light: #4caf50;
+    --green-bright: #76ff7a;
+    --gold: #ffd700;
+    --gold-dark: #b8860b;
+    --bg: #0d1f0d;
+    --surface: rgba(20,50,20,0.92);
+    --surface2: rgba(30,70,30,0.85);
+    --text: #e8f5e8;
+    --text-muted: #8bc48b;
+    --accent: #76ff7a;
+    --danger: #ff5252;
+    --radius: 16px;
+    --font: 'Segoe UI', system-ui, sans-serif;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { width:100%; height:100%; overflow:hidden; background:#0d1f0d; font-family:var(--font); color:var(--text); }
+
+  /* CAMERA LAYER */
+  #camera-video {
+    position:fixed; inset:0; width:100%; height:100%;
+    object-fit:cover; z-index:0;
+    display:none;
+  }
+  #ar-canvas {
+    position:fixed; inset:0; width:100%; height:100%;
+    z-index:1; pointer-events:none; display:none;
+  }
+  #bg-fallback {
+    position:fixed; inset:0; z-index:0;
+    background: radial-gradient(ellipse at 30% 60%, #1a4a1a 0%, #0d1f0d 60%);
+  }
+
+  /* SCREENS */
+  .screen {
+    position:fixed; inset:0; z-index:10;
+    display:flex; flex-direction:column;
+    overflow:hidden;
+  }
+  .screen.hidden { display:none; }
+
+  /* SPLASH */
+  #screen-splash {
+    background: linear-gradient(160deg, #0d2a0d 0%, #1a3a0a 50%, #0d1f0d 100%);
+    align-items:center; justify-content:center; gap:24px;
+  }
+  .splash-logo {
+    width:120px; height:120px; border-radius:30px;
+    background: linear-gradient(135deg, #4caf50, #1b5e20);
+    display:flex; align-items:center; justify-content:center;
+    font-size:60px; box-shadow:0 0 40px rgba(76,175,80,0.5);
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+  @keyframes pulse-glow {
+    0%,100%{ box-shadow:0 0 40px rgba(76,175,80,0.5); }
+    50%{ box-shadow:0 0 80px rgba(76,175,80,0.9); }
+  }
+  .splash-title { font-size:32px; font-weight:700; color:#76ff7a; letter-spacing:2px; }
+  .splash-sub { font-size:14px; color:#8bc48b; letter-spacing:4px; text-transform:uppercase; }
+  .btn-start {
+    margin-top:16px; padding:16px 48px; border:none; border-radius:50px;
+    background: linear-gradient(135deg, #4caf50, #1b5e20);
+    color:#fff; font-size:18px; font-weight:600; cursor:pointer;
+    box-shadow:0 4px 20px rgba(76,175,80,0.4);
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .btn-start:active { transform:scale(0.96); }
+
+  /* HUD */
+  #screen-game { background:transparent; pointer-events:none; }
+  #hud-top {
+    position:absolute; top:0; left:0; right:0;
+    padding:env(safe-area-inset-top,16px) 16px 12px;
+    display:flex; justify-content:space-between; align-items:flex-start;
+    background:linear-gradient(180deg, rgba(0,0,0,0.7) 0%, transparent 100%);
+    pointer-events:auto; z-index:20;
+  }
+  .hud-stat { display:flex; flex-direction:column; gap:2px; }
+  .hud-label { font-size:10px; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase; }
+  .hud-value { font-size:20px; font-weight:700; color:var(--gold); }
+  .hud-value.steps { color:var(--accent); }
+  .vip-badge {
+    padding:4px 12px; border-radius:20px;
+    font-size:11px; font-weight:700; letter-spacing:1px;
+    background:linear-gradient(135deg,#ffd700,#ff8f00);
+    color:#1a1a00;
+  }
+
+  /* AR SPAWN ZONE */
+  #ar-overlay {
+    position:absolute; inset:0; pointer-events:none; z-index:5;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .crosshair {
+    width:60px; height:60px;
+    border:2px solid rgba(118,255,122,0.5);
+    border-radius:50%;
+    position:relative;
+  }
+  .crosshair::before, .crosshair::after {
+    content:''; position:absolute;
+    background:rgba(118,255,122,0.5);
+  }
+  .crosshair::before { top:50%; left:0; right:0; height:1px; transform:translateY(-50%); }
+  .crosshair::after { left:50%; top:0; bottom:0; width:1px; transform:translateX(-50%); }
+
+  /* PIKMIN IN AR */
+  .ar-pikmin {
+    position:absolute; width:60px; height:60px;
+    display:flex; flex-direction:column; align-items:center;
+    cursor:pointer; pointer-events:auto;
+    animation: float-bounce 1.5s ease-in-out infinite;
+    transform-origin: bottom center;
+  }
+  @keyframes float-bounce {
+    0%,100%{ transform: translateY(0); }
+    50%{ transform: translateY(-10px); }
+  }
+  .pikmin-emoji { font-size:40px; filter:drop-shadow(0 4px 8px rgba(0,0,0,0.5)); }
+  .pikmin-name { font-size:9px; color:white; background:rgba(0,0,0,0.6); padding:2px 6px; border-radius:10px; }
+
+  /* BOTTOM NAV */
+  #nav-bar {
+    position:absolute; bottom:0; left:0; right:0;
+    padding:12px 8px calc(env(safe-area-inset-bottom,0px) + 12px);
+    display:flex; justify-content:space-around; align-items:center;
+    background:linear-gradient(0deg, rgba(0,0,0,0.85) 0%, transparent 100%);
+    pointer-events:auto; z-index:20;
+  }
+  .nav-btn {
+    display:flex; flex-direction:column; align-items:center; gap:4px;
+    padding:8px 12px; border-radius:12px; cursor:pointer;
+    border:none; background:transparent; color:var(--text-muted);
+    font-size:10px; font-weight:500; transition:color 0.2s, background 0.2s;
+  }
+  .nav-btn .icon { font-size:24px; }
+  .nav-btn.active { color:var(--accent); background:rgba(118,255,122,0.12); }
+
+  /* AR CAMERA BUTTON */
+  #btn-ar {
+    width:68px; height:68px; border-radius:50%;
+    background:linear-gradient(135deg,#76ff7a,#4caf50);
+    border:3px solid white; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    font-size:28px; box-shadow:0 4px 20px rgba(76,175,80,0.6);
+    transition:transform 0.15s;
+  }
+  #btn-ar:active { transform:scale(0.92); }
+
+  /* PANELS */
+  .panel {
+    position:fixed; inset:0; z-index:50;
+    background:rgba(0,0,0,0.6);
+    display:flex; flex-direction:column; justify-content:flex-end;
+  }
+  .panel.hidden { display:none; }
+  .panel-sheet {
+    background:var(--bg);
+    border-radius:24px 24px 0 0;
+    max-height:88vh; overflow-y:auto;
+    border-top:1px solid rgba(76,175,80,0.3);
+  }
+  .panel-handle {
+    width:36px; height:4px; border-radius:2px;
+    background:rgba(255,255,255,0.2);
+    margin:12px auto 0;
+  }
+  .panel-title {
+    padding:16px 20px 8px;
+    font-size:20px; font-weight:700; color:var(--accent);
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .panel-close {
+    width:32px; height:32px; border-radius:50%;
+    background:rgba(255,255,255,0.1); border:none; color:var(--text);
+    cursor:pointer; font-size:16px;
+  }
+  .panel-body { padding:0 16px 32px; }
+
+  /* POKEDEX */
+  .pikmin-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:12px; }
+  .pikmin-card {
+    background:var(--surface); border-radius:16px; padding:16px 8px;
+    display:flex; flex-direction:column; align-items:center; gap:6px;
+    border:1px solid rgba(76,175,80,0.2);
+    transition:transform 0.15s, border-color 0.2s;
+    cursor:pointer;
+  }
+  .pikmin-card.locked { opacity:0.35; filter:grayscale(1); }
+  .pikmin-card:not(.locked):active { transform:scale(0.95); }
+  .pikmin-card .big-emoji { font-size:44px; }
+  .pikmin-card .pname { font-size:12px; font-weight:600; color:var(--text); }
+  .pikmin-card .pfriend { font-size:10px; color:var(--text-muted); }
+  .friend-bar { width:100%; height:4px; background:rgba(255,255,255,0.1); border-radius:2px; overflow:hidden; }
+  .friend-fill { height:100%; background:var(--accent); border-radius:2px; transition:width 0.4s; }
+
+  /* SHOP / VIP */
+  .shop-item {
+    background:var(--surface); border-radius:14px; padding:16px;
+    margin-bottom:12px; display:flex; align-items:center; gap:14px;
+    border:1px solid rgba(255,215,0,0.15);
+  }
+  .shop-icon { font-size:36px; }
+  .shop-info { flex:1; }
+  .shop-name { font-weight:600; font-size:15px; }
+  .shop-desc { font-size:12px; color:var(--text-muted); margin-top:2px; }
+  .btn-buy {
+    padding:8px 16px; border-radius:20px;
+    background:linear-gradient(135deg,#ffd700,#ff8f00);
+    color:#1a1a00; font-weight:700; font-size:13px;
+    border:none; cursor:pointer; white-space:nowrap;
+  }
+  .btn-buy:active { transform:scale(0.95); }
+  .btn-buy:disabled { opacity:0.4; cursor:not-allowed; }
+
+  /* BOSS */
+  .boss-area { text-align:center; padding:20px 0; }
+  .boss-emoji { font-size:80px; animation:boss-shake 3s ease-in-out infinite; }
+  @keyframes boss-shake {
+    0%,100%{ transform:rotate(0deg); }
+    25%{ transform:rotate(-3deg) scale(1.05); }
+    75%{ transform:rotate(3deg) scale(1.05); }
+  }
+  .boss-hp-bar { width:100%; height:16px; background:rgba(255,255,255,0.1); border-radius:8px; overflow:hidden; margin:12px 0; }
+  .boss-hp-fill { height:100%; border-radius:8px; transition:width 0.5s; background:linear-gradient(90deg,#ff5252,#ff1744); }
+  .btn-attack {
+    width:100%; padding:16px; border-radius:14px;
+    background:linear-gradient(135deg,#ff5252,#b71c1c);
+    color:#fff; font-size:18px; font-weight:700;
+    border:none; cursor:pointer; margin-top:12px;
+    box-shadow:0 4px 16px rgba(255,82,82,0.4);
+  }
+  .btn-attack:active { transform:scale(0.97); }
+
+  /* QUIZ */
+  .quiz-question { font-size:16px; font-weight:600; line-height:1.5; margin:12px 0 20px; padding:16px; background:var(--surface); border-radius:12px; }
+  .quiz-answers { display:flex; flex-direction:column; gap:10px; }
+  .btn-answer {
+    padding:14px 16px; border-radius:12px;
+    background:var(--surface2); border:1px solid rgba(76,175,80,0.2);
+    color:var(--text); text-align:left; cursor:pointer;
+    font-size:14px; transition:background 0.15s, border-color 0.15s;
+  }
+  .btn-answer:active { background:rgba(76,175,80,0.3); border-color:var(--accent); }
+  .btn-answer.correct { background:rgba(76,175,80,0.3); border-color:var(--accent); color:var(--accent); }
+  .btn-answer.wrong { background:rgba(255,82,82,0.2); border-color:var(--danger); color:var(--danger); }
+  .quiz-score { font-size:32px; font-weight:700; color:var(--accent); text-align:center; margin:16px 0; }
+
+  /* TOAST */
+  #toast {
+    position:fixed; bottom:120px; left:50%; transform:translateX(-50%);
+    background:rgba(20,50,20,0.95); color:var(--accent);
+    padding:10px 24px; border-radius:20px;
+    font-size:14px; font-weight:600;
+    border:1px solid rgba(76,175,80,0.4);
+    z-index:200; opacity:0; pointer-events:none;
+    transition:opacity 0.3s, transform 0.3s;
+    white-space:nowrap;
+  }
+  #toast.show { opacity:1; transform:translateX(-50%) translateY(-8px); }
+
+  /* CODE REDEEM */
+  .code-input-wrap { display:flex; gap:8px; margin-top:12px; }
+  .code-input {
+    flex:1; padding:12px 16px; border-radius:10px;
+    background:var(--surface); border:1px solid rgba(76,175,80,0.3);
+    color:var(--text); font-size:15px; outline:none;
+  }
+  .code-input:focus { border-color:var(--accent); }
+  .btn-redeem {
+    padding:12px 20px; border-radius:10px;
+    background:var(--green-mid); border:none;
+    color:white; font-weight:600; cursor:pointer;
+  }
+
+  /* GPS STATUS */
+  .gps-status {
+    display:flex; align-items:center; gap:8px;
+    padding:10px 14px; border-radius:10px;
+    background:var(--surface); margin-bottom:12px;
+    font-size:13px;
+  }
+  .gps-dot { width:8px; height:8px; border-radius:50%; background:#555; }
+  .gps-dot.active { background:var(--accent); animation:pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* WALK PROGRESS */
+  .walk-ring-wrap { display:flex; justify-content:center; padding:16px 0; }
+  .walk-ring-wrap svg { transform:rotate(-90deg); }
+  .ring-bg { fill:none; stroke:rgba(255,255,255,0.08); stroke-width:8; }
+  .ring-fg { fill:none; stroke:var(--accent); stroke-width:8; stroke-linecap:round; transition:stroke-dashoffset 0.5s; }
+  .ring-center { transform:rotate(90deg); transform-origin:60px 60px; }
+  .ring-text { font-size:22px; font-weight:700; fill:var(--accent); text-anchor:middle; dominant-baseline:central; }
+  .ring-label { font-size:10px; fill:var(--text-muted); text-anchor:middle; }
+
+  /* DAILY REWARD */
+  .daily-days { display:flex; gap:6px; justify-content:center; flex-wrap:wrap; margin:12px 0; }
+  .day-chip {
+    width:40px; height:44px; border-radius:8px;
+    background:var(--surface); border:1px solid rgba(76,175,80,0.15);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    font-size:10px; color:var(--text-muted); gap:2px;
+  }
+  .day-chip.claimed { background:rgba(76,175,80,0.2); border-color:var(--accent); color:var(--accent); }
+  .day-chip .reward-icon { font-size:16px; }
+  .btn-claim {
+    width:100%; padding:14px; border-radius:12px;
+    background:linear-gradient(135deg,#ffd700,#ff8f00);
+    color:#1a1a00; font-weight:700; font-size:16px;
+    border:none; cursor:pointer; margin-top:8px;
+  }
+  .btn-claim:disabled { opacity:0.4; }
+
+  /* MAP VIEW */
+  #map-canvas {
+    width:100%; height:240px; border-radius:14px;
+    background:var(--surface);
+    display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:8px;
+    border:1px solid rgba(76,175,80,0.2);
+    overflow:hidden; position:relative;
+  }
+  .map-placeholder { color:var(--text-muted); font-size:13px; }
+  .map-pin {
+    position:absolute; font-size:32px;
+    animation:pin-drop 0.5s ease-out;
+    cursor:pointer;
+  }
+  @keyframes pin-drop { 0%{transform:translateY(-30px);opacity:0} 100%{transform:translateY(0);opacity:1} }
+  .map-coords { font-size:11px; color:var(--text-muted); margin-top:6px; text-align:center; }
+
+  /* GUILD */
+  .guild-card {
+    background:var(--surface); border-radius:14px; padding:16px;
+    margin-bottom:10px; display:flex; align-items:center; gap:12px;
+    border:1px solid rgba(76,175,80,0.15);
+  }
+  .guild-avatar { font-size:36px; }
+  .guild-info { flex:1; }
+  .guild-name { font-weight:700; font-size:15px; }
+  .guild-members { font-size:12px; color:var(--text-muted); margin-top:2px; }
+  .btn-join { padding:8px 16px; border-radius:20px; background:var(--green-mid); border:none; color:#fff; font-weight:600; font-size:13px; cursor:pointer; }
+
+  /* NOTIFICATION DOT */
+  .notif-dot {
+    position:absolute; top:4px; right:4px;
+    width:8px; height:8px; border-radius:50%;
+    background:var(--danger);
+  }
+  .nav-btn { position:relative; }
+
+  /* SPAWN ANIMATION */
+  @keyframes spawn-in {
+    0%{ transform:scale(0) translateY(20px); opacity:0; }
+    60%{ transform:scale(1.2) translateY(-5px); opacity:1; }
+    100%{ transform:scale(1) translateY(0); opacity:1; }
+  }
+  .ar-pikmin { animation: spawn-in 0.4s ease-out, float-bounce 1.5s ease-in-out 0.4s infinite; }
+
+  /* ATTACK FLASH */
+  @keyframes flash-red { 0%,100%{background:transparent} 50%{background:rgba(255,0,0,0.3)} }
+  .damage-flash { animation:flash-red 0.3s ease-out; }
+</style>
+</head>
+<body>
+
+<video id="camera-video" autoplay playsinline muted></video>
+<canvas id="ar-canvas"></canvas>
+<div id="bg-fallback"></div>
+
+<!-- SPLASH -->
+<div id="screen-splash" class="screen">
+  <div class="splash-logo">🌱</div>
+  <div class="splash-title">Pikmin Life AR</div>
+  <div class="splash-sub">Real World Adventure</div>
+  <button class="btn-start" onclick="startGame()">開始冒險</button>
+</div>
+
+<!-- GAME HUD -->
+<div id="screen-game" class="screen hidden">
+  <div id="hud-top">
+    <div class="hud-stat">
+      <span class="hud-label">💰 金幣</span>
+      <span class="hud-value" id="hud-gold">0</span>
+    </div>
+    <div class="hud-stat" style="align-items:center">
+      <span id="vip-badge-hud" class="vip-badge" style="display:none">VIP ⭐</span>
+    </div>
+    <div class="hud-stat" style="align-items:flex-end">
+      <span class="hud-label">👟 步數</span>
+      <span class="hud-value steps" id="hud-steps">0</span>
+    </div>
+  </div>
+
+  <div id="ar-overlay">
+    <div class="crosshair"></div>
+  </div>
+
+  <!-- Pikmin spawn area -->
+  <div id="pikmin-field"></div>
+
+  <div id="nav-bar">
+    <button class="nav-btn" onclick="openPanel('panel-pokedex')">
+      <span class="icon">📖</span>圖鑑
+    </button>
+    <button class="nav-btn" onclick="openPanel('panel-map')">
+      <span class="icon">🗺️</span>地圖
+    </button>
+    <button id="btn-ar" onclick="toggleCamera()">📷</button>
+    <button class="nav-btn" onclick="openPanel('panel-shop')">
+      <span class="icon">🏪</span>商店
+    </button>
+    <button class="nav-btn" onclick="openPanel('panel-more')">
+      <span class="icon">☰</span>更多
+    </button>
+  </div>
+</div>
+
+<!-- POKEDEX PANEL -->
+<div id="panel-pokedex" class="panel hidden">
+  <div class="panel-sheet">
+    <div class="panel-handle"></div>
+    <div class="panel-title">📖 Pikmin 圖鑑 <button class="panel-close" onclick="closePanel('panel-pokedex')">✕</button></div>
+    <div class="panel-body">
+      <div id="pokedex-grid" class="pikmin-grid"></div>
+    </div>
+  </div>
+</div>
+
+<!-- MAP PANEL -->
+<div id="panel-map" class="panel hidden">
+  <div class="panel-sheet">
+    <div class="panel-handle"></div>
+    <div class="panel-title">🗺️ 探索地圖 <button class="panel-close" onclick="closePanel('panel-map')">✕</button></div>
+    <div class="panel-body">
+      <div class="gps-status">
+        <div class="gps-dot" id="gps-dot"></div>
+        <span id="gps-text">等待 GPS 定位...</span>
+      </div>
+      <div id="map-canvas">
+        <span class="map-placeholder">🌍</span>
+        <span class="map-placeholder">取得位置中...</span>
+      </div>
+      <p class="map-coords" id="map-coords"></p>
+      <div class="walk-ring-wrap" style="margin-top:16px">
+        <svg width="120" height="120" viewBox="0 0 120 120">
+          <circle class="ring-bg" cx="60" cy="60" r="52"/>
+          <circle class="ring-fg" id="ring-fg" cx="60" cy="60" r="52" stroke-dasharray="327" stroke-dashoffset="327"/>
+          <g class="ring-center">
+            <text class="ring-text" x="60" y="55" id="ring-steps-text">0</text>
+            <text class="ring-label" x="60" y="73">步數</text>
+          </g>
+        </svg>
+      </div>
+      <p style="text-align:center;font-size:13px;color:var(--text-muted)">每走 30 步出現一隻 Pikmin！</p>
+    </div>
+  </div>
+</div>
+
+<!-- SHOP PANEL -->
+<div id="panel-shop" class="panel hidden">
+  <div class="panel-sheet">
+    <div class="panel-handle"></div>
+    <div class="panel-title">🏪 商店 <button class="panel-close" onclick="closePanel('panel-shop')">✕</button></div>
+    <div class="panel-body">
+      <div class="shop-item">
+        <span class="shop-icon">⭐</span>
+        <div class="shop-info">
+          <div class="shop-name">VIP 1 - 銀卡</div>
+          <div class="shop-desc">金幣獎勵 ×1.25 / 每日獎勵加倍</div>
+        </div>
+        <button class="btn-buy" onclick="buyVIP(1,10000)">🪙10000</button>
+      </div>
+      <div class="shop-item">
+        <span class="shop-icon">🌟</span>
+        <div class="shop-info">
+          <div class="shop-name">VIP 2 - 金卡</div>
+          <div class="shop-desc">金幣獎勵 ×2.0 / Boss 傷害加倍</div>
+        </div>
+        <button class="btn-buy" onclick="buyVIP(2,50000)">🪙50000</button>
+      </div>
+      <div class="shop-item">
+        <span class="shop-icon">🌻</span>
+        <div class="shop-info">
+          <div class="shop-name">金種子 ×10</div>
+          <div class="shop-desc">召喚稀有金色 Pikmin</div>
+        </div>
+        <button class="btn-buy" onclick="buyItem('goldseed',5000)">🪙5000</button>
+      </div>
+      <div style="margin-top:20px;padding-top:16px;border-top:1px solid rgba(76,175,80,0.15)">
+        <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px">🎁 兌換碼</div>
+        <div class="code-input-wrap">
+          <input id="code-input" class="code-input" placeholder="輸入兌換碼..." />
+          <button class="btn-redeem" onclick="redeemCode()">兌換</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MORE PANEL -->
+<div id="panel-more" class="panel hidden">
+  <div class="panel-sheet">
+    <div class="panel-handle"></div>
+    <div class="panel-title">☰ 更多功能 <button class="panel-close" onclick="closePanel('panel-more')">✕</button></div>
+    <div class="panel-body">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+        <div class="shop-item" style="flex-direction:column;align-items:center;cursor:pointer;padding:20px 12px" onclick="closePanel('panel-more');openPanel('panel-boss')">
+          <span style="font-size:40px">👾</span>
+          <span style="font-size:13px;margin-top:8px;font-weight:600">挑戰 Boss</span>
+        </div>
+        <div class="shop-item" style="flex-direction:column;align-items:center;cursor:pointer;padding:20px 12px" onclick="closePanel('panel-more');openPanel('panel-quiz')">
+          <span style="font-size:40px">🧠</span>
+          <span style="font-size:13px;margin-top:8px;font-weight:600">生物題庫</span>
+        </div>
+        <div class="shop-item" style="flex-direction:column;align-items:center;cursor:pointer;padding:20px 12px" onclick="closePanel('panel-more');openPanel('panel-daily')">
+          <span style="font-size:40px">🎁</span>
+          <span style="font-size:13px;margin-top:8px;font-weight:600">每日獎勵</span>
+        </div>
+        <div class="shop-item" style="flex-direction:column;align-items:center;cursor:pointer;padding:20px 12px" onclick="closePanel('panel-more');openPanel('panel-guild')">
+          <span style="font-size:40px">🏰</span>
+          <span style="font-size:13px;margin-top:8px;font-weight:600">公會</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- BOSS PANEL -->
+<div id="panel-boss" class="panel hidden">
+  <div class="panel-sheet">
+    <div class="panel-handle"></div>
+    <div class="panel-title">👾 世界 Boss <button class="panel-close" onclick="closePanel('panel-boss')">✕</button></div>
+    <div class="panel-body">
+      <div class="boss-area">
+        <div class="boss-emoji" id="boss-emoji">🦕</div>
+        <div style="font-size:15px;font-weight:600;margin:8px 0" id="boss-name">遠古恐龍王</div>
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted)">
+          <span>HP</span><span id="boss-hp-text">10000 / 10000</span>
+        </div>
+        <div class="boss-hp-bar">
+          <div class="boss-hp-fill" id="boss-hp-fill" style="width:100%"></div>
+        </div>
+        <div style="font-size:13px;color:var(--text-muted);margin-bottom:4px">你的攻擊力: <span id="atk-power" style="color:var(--accent)">100</span></div>
+        <button class="btn-attack" onclick="attackBoss()">⚔️ 攻擊！</button>
+        <div id="boss-reward-text" style="font-size:13px;color:var(--gold);margin-top:10px;min-height:20px"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- QUIZ PANEL -->
+<div id="panel-quiz" class="panel hidden">
+  <div class="panel-sheet">
+    <div class="panel-handle"></div>
+    <div class="panel-title">🧠 生物題庫 <button class="panel-close" onclick="closePanel('panel-quiz')">✕</button></div>
+    <div class="panel-body" id="quiz-body">
+      <div style="text-align:center;padding:20px 0">
+        <div style="font-size:32px;margin-bottom:12px">🌿</div>
+        <p style="color:var(--text-muted);margin-bottom:20px">答對 3 題以上，獲得 Pikmin！</p>
+        <button class="btn-attack" style="background:linear-gradient(135deg,#4caf50,#1b5e20)" onclick="startQuiz()">開始測驗</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- DAILY PANEL -->
+<div id="panel-daily" class="panel hidden">
+  <div class="panel-sheet">
+    <div class="panel-handle"></div>
+    <div class="panel-title">🎁 每日獎勵 <button class="panel-close" onclick="closePanel('panel-daily')">✕</button></div>
+    <div class="panel-body">
+      <div class="daily-days" id="daily-days"></div>
+      <button class="btn-claim" id="btn-claim" onclick="claimDaily()">領取今日獎勵</button>
+    </div>
+  </div>
+</div>
+
+<!-- GUILD PANEL -->
+<div id="panel-guild" class="panel hidden">
+  <div class="panel-sheet">
+    <div class="panel-handle"></div>
+    <div class="panel-title">🏰 公會 <button class="panel-close" onclick="closePanel('panel-guild')">✕</button></div>
+    <div class="panel-body">
+      <div class="guild-card">
+        <span class="guild-avatar">🌸</span>
+        <div class="guild-info">
+          <div class="guild-name">花田探險隊</div>
+          <div class="guild-members">👥 42 / 50 成員</div>
+        </div>
+        <button class="btn-join" onclick="joinGuild('花田探險隊')">加入</button>
+      </div>
+      <div class="guild-card">
+        <span class="guild-avatar">🍄</span>
+        <div class="guild-info">
+          <div class="guild-name">蘑菇森林幫</div>
+          <div class="guild-members">👥 28 / 50 成員</div>
+        </div>
+        <button class="btn-join" onclick="joinGuild('蘑菇森林幫')">加入</button>
+      </div>
+      <div class="guild-card">
+        <span class="guild-avatar">⚡</span>
+        <div class="guild-info">
+          <div class="guild-name">閃電突擊隊</div>
+          <div class="guild-members">👥 50 / 50 成員</div>
+        </div>
+        <button class="btn-join" onclick="joinGuild('閃電突擊隊')" disabled>已滿</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PIKMIN DETAIL -->
+<div id="panel-pikmin" class="panel hidden">
+  <div class="panel-sheet">
+    <div class="panel-handle"></div>
+    <div class="panel-title" id="pikmin-detail-title">Pikmin 詳情 <button class="panel-close" onclick="closePanel('panel-pikmin')">✕</button></div>
+    <div class="panel-body" id="pikmin-detail-body"></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ========== GAME STATE ==========
+const G = {
+  gold: parseInt(localStorage.getItem('gold') || '500'),
+  steps: parseInt(localStorage.getItem('steps') || '0'),
+  vip: parseInt(localStorage.getItem('vip') || '0'),
+  unlockedPikmin: JSON.parse(localStorage.getItem('unlocked') || '[]'),
+  pikminFriendship: JSON.parse(localStorage.getItem('friendship') || '{}'),
+  bossHP: parseInt(localStorage.getItem('bossHP') || '10000'),
+  lastDaily: localStorage.getItem('lastDaily') || '',
+  guildName: localStorage.getItem('guild') || '',
+  streakDay: parseInt(localStorage.getItem('streak') || '0'),
+  cameraOn: false,
+  lastGPS: null,
+  quizActive: false,
+  quizIndex: 0,
+  quizScore: 0,
+  quizQuestions: [],
+};
+
+const BOSS_MAX = 10000;
+
+function save() {
+  localStorage.setItem('gold', G.gold);
+  localStorage.setItem('steps', G.steps);
+  localStorage.setItem('vip', G.vip);
+  localStorage.setItem('unlocked', JSON.stringify(G.unlockedPikmin));
+  localStorage.setItem('friendship', JSON.stringify(G.pikminFriendship));
+  localStorage.setItem('bossHP', G.bossHP);
+  localStorage.setItem('lastDaily', G.lastDaily);
+  localStorage.setItem('guild', G.guildName);
+  localStorage.setItem('streak', G.streakDay);
+}
+
+// ========== PIKMIN DATA ==========
+const PIKMIN_LIST = [
+  { id:'red', name:'紅 Pikmin', emoji:'🔴', color:'#f44336', rarity:'普通', desc:'勇猛的戰士，攻擊力最強' },
+  { id:'yellow', name:'黃 Pikmin', emoji:'🟡', color:'#ffc107', rarity:'普通', desc:'動作敏捷，可以投擲炸彈' },
+  { id:'blue', name:'藍 Pikmin', emoji:'🔵', color:'#2196f3', rarity:'普通', desc:'水中健將，耐力十足' },
+  { id:'purple', name:'紫 Pikmin', emoji:'🟣', color:'#9c27b0', rarity:'稀有', desc:'力大無窮，重量是普通的十倍' },
+  { id:'white', name:'白 Pikmin', emoji:'⚪', color:'#eeeeee', rarity:'稀有', desc:'速度最快，有毒體質' },
+  { id:'rock', name:'岩 Pikmin', emoji:'🪨', color:'#795548', rarity:'稀有', desc:'堅硬如石，可以破壞水晶' },
+  { id:'winged', name:'翼 Pikmin', emoji:'🩷', color:'#e91e63', rarity:'超稀有', desc:'可以在空中飛翔的粉紅仙子' },
+  { id:'ice', name:'冰 Pikmin', emoji:'🩵', color:'#00bcd4', rarity:'超稀有', desc:'凍結一切的冰雪精靈' },
+  { id:'gold', name:'金 Pikmin', emoji:'⭐', color:'#ffd700', rarity:'傳說', desc:'傳說中的稀世珍寶，帶來無盡財富' },
+];
+
+// ========== QUIZ DATA ==========
+const QUESTIONS = [
+  { q:'植物行光合作用主要需要什麼？', a:['氧氣','陽光','蛋白質','氮氣'], c:1 },
+  { q:'人體呼吸主要器官是？', a:['胃','肺','肝','心臟'], c:1 },
+  { q:'蜘蛛屬於哪一類動物？', a:['昆蟲','甲殼類','蛛形綱','爬行類'], c:2 },
+  { q:'下列哪個是哺乳動物？', a:['海龜','鱷魚','蝙蝠','青蛙'], c:2 },
+  { q:'葉綠素是什麼顏色？', a:['紅色','藍色','綠色','黃色'], c:2 },
+  { q:'蜜蜂是什麼類型的昆蟲？', a:['肉食性','草食性','雜食性','腐食性'], c:2 },
+  { q:'鯨魚是哪種動物？', a:['魚類','爬行類','哺乳類','兩棲類'], c:2 },
+  { q:'人體最大的器官是？', a:['肝臟','皮膚','心臟','肺臟'], c:1 },
+  { q:'DNA 的全名縮寫代表？', a:['氨基酸','脫氧核糖核酸','核糖核酸','蛋白質'], c:1 },
+  { q:'章魚有幾顆心臟？', a:['1顆','2顆','3顆','4顆'], c:2 },
+];
+
+// ========== INIT ==========
+function startGame() {
+  document.getElementById('screen-splash').classList.add('hidden');
+  document.getElementById('screen-game').classList.remove('hidden');
+  updateHUD();
+  initPokedex();
+  initDaily();
+  updateBossUI();
+  startGPS();
+  if (G.steps >= 30) spawnRandomPikmin();
+}
+
+function updateHUD() {
+  document.getElementById('hud-gold').textContent = G.gold.toLocaleString();
+  document.getElementById('hud-steps').textContent = G.steps.toLocaleString();
+  const vipBadge = document.getElementById('vip-badge-hud');
+  if (G.vip > 0) {
+    vipBadge.style.display = 'block';
+    vipBadge.textContent = `VIP ${G.vip} ${'⭐'.repeat(G.vip)}`;
+  } else {
+    vipBadge.style.display = 'none';
+  }
+  updateRing();
+}
+
+function vipMult() { return G.vip === 1 ? 1.25 : G.vip === 2 ? 2.0 : 1.0; }
+
+// ========== GPS ==========
+function startGPS() {
+  if (!navigator.geolocation) { showToast('此裝置不支援 GPS'); return; }
+  navigator.geolocation.watchPosition(pos => {
+    const { latitude: lat, longitude: lon } = pos.coords;
+    document.getElementById('gps-dot').classList.add('active');
+    document.getElementById('gps-text').textContent = `GPS 定位中 ✓ 精度: ${Math.round(pos.coords.accuracy)}m`;
+    document.getElementById('map-coords').textContent = `緯度: ${lat.toFixed(5)}  經度: ${lon.toFixed(5)}`;
+    updateMapCanvas(lat, lon);
+    if (G.lastGPS) {
+      const dist = haversine(G.lastGPS.lat, G.lastGPS.lon, lat, lon);
+      if (dist > 20) {
+        const steps = Math.floor(dist / 0.75);
+        G.steps += steps;
+        G.gold += Math.floor(steps * 2 * vipMult());
+        if (G.steps % 30 < steps) spawnRandomPikmin();
+        updateHUD();
+        save();
+      }
+    }
+    G.lastGPS = { lat, lon };
+  }, err => {
+    document.getElementById('gps-text').textContent = 'GPS 未授權，請允許位置存取';
+  }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 });
+}
+
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const dLat = (lat2-lat1)*Math.PI/180;
+  const dLon = (lon2-lon1)*Math.PI/180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function updateMapCanvas(lat, lon) {
+  const canvas = document.getElementById('map-canvas');
+  canvas.innerHTML = '';
+  // Simple tile-style mini map
+  canvas.style.background = `
+    repeating-linear-gradient(0deg,rgba(76,175,80,0.05) 0px,rgba(76,175,80,0.05) 1px,transparent 1px,transparent 40px),
+    repeating-linear-gradient(90deg,rgba(76,175,80,0.05) 0px,rgba(76,175,80,0.05) 1px,transparent 1px,transparent 40px),
+    var(--surface)`;
+  const pin = document.createElement('div');
+  pin.className = 'map-pin';
+  pin.textContent = '📍';
+  pin.style.left = '50%'; pin.style.top = '50%';
+  pin.style.transform = 'translate(-50%,-50%)';
+  canvas.appendChild(pin);
+  // spawn nearby pikmin dots
+  PIKMIN_LIST.slice(0,5).forEach((p,i) => {
+    if (Math.random() > 0.5) return;
+    const dot = document.createElement('div');
+    dot.className = 'map-pin';
+    dot.textContent = p.emoji;
+    dot.style.fontSize = '18px';
+    dot.style.left = (20 + Math.random()*60) + '%';
+    dot.style.top = (20 + Math.random()*60) + '%';
+    dot.style.animationDelay = (i*0.15)+'s';
+    canvas.appendChild(dot);
+  });
+}
+
+function updateRing() {
+  const goal = 300;
+  const pct = Math.min(G.steps % goal / goal, 1);
+  const circ = 327;
+  document.getElementById('ring-fg').style.strokeDashoffset = circ * (1 - pct);
+  document.getElementById('ring-steps-text').textContent = G.steps % goal;
+}
+
+// ========== CAMERA / AR ==========
+async function toggleCamera() {
+  if (G.cameraOn) {
+    stopCamera();
+  } else {
+    await startCamera();
+  }
+}
+
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width:{ideal:1280}, height:{ideal:720} }
+    });
+    const vid = document.getElementById('camera-video');
+    vid.srcObject = stream;
+    vid.style.display = 'block';
+    document.getElementById('bg-fallback').style.display = 'none';
+    document.getElementById('ar-canvas').style.display = 'block';
+    document.getElementById('btn-ar').textContent = '⏹️';
+    G.cameraOn = true;
+    showToast('📷 AR 相機已開啟！');
+    setTimeout(() => spawnRandomPikmin(), 1500);
+  } catch(e) {
+    showToast('相機未授權，請允許相機存取');
+  }
+}
+
+function stopCamera() {
+  const vid = document.getElementById('camera-video');
+  if (vid.srcObject) vid.srcObject.getTracks().forEach(t=>t.stop());
+  vid.style.display = 'none';
+  document.getElementById('bg-fallback').style.display = 'block';
+  document.getElementById('ar-canvas').style.display = 'none';
+  document.getElementById('btn-ar').textContent = '📷';
+  G.cameraOn = false;
+}
+
+// ========== PIKMIN SPAWN ==========
+function spawnRandomPikmin() {
+  const field = document.getElementById('pikmin-field');
+  if (field.children.length >= 5) {
+    field.removeChild(field.children[0]);
+  }
+  const pool = G.vip >= 2 ? PIKMIN_LIST : PIKMIN_LIST.filter(p => p.rarity !== '傳說');
+  const weights = pool.map(p => p.rarity==='普通'?40 : p.rarity==='稀有'?25 : p.rarity==='超稀有'?10 : 3);
+  const total = weights.reduce((a,b)=>a+b,0);
+  let r = Math.random()*total, pick = pool[0];
+  for (let i=0;i<pool.length;i++) { r-=weights[i]; if(r<=0){pick=pool[i];break;} }
+
+  const el = document.createElement('div');
+  el.className = 'ar-pikmin';
+  el.style.left = (15 + Math.random()*65) + '%';
+  el.style.top = (30 + Math.random()*35) + '%';
+  el.style.position = 'absolute';
+  el.innerHTML = `<span class="pikmin-emoji">${pick.emoji}</span><span class="pikmin-name">${pick.name}</span>`;
+  el.onclick = () => catchPikmin(el, pick);
+  field.appendChild(el);
+}
+
+function catchPikmin(el, pikmin) {
+  el.style.transform = 'scale(0)';
+  el.style.opacity = '0';
+  el.style.transition = 'transform 0.3s, opacity 0.3s';
+  setTimeout(() => el.remove(), 300);
+
+  if (!G.unlockedPikmin.includes(pikmin.id)) G.unlockedPikmin.push(pikmin.id);
+  G.pikminFriendship[pikmin.id] = Math.min(100, (G.pikminFriendship[pikmin.id] || 0) + 10);
+
+  const goldReward = Math.floor((pikmin.rarity==='傳說'?500:pikmin.rarity==='超稀有'?200:pikmin.rarity==='稀有'?80:30) * vipMult());
+  G.gold += goldReward;
+  updateHUD(); save();
+  showToast(`${pikmin.emoji} 抓到 ${pikmin.name}！+${goldReward} 🪙`);
+  initPokedex();
+}
+
+// ========== POKEDEX ==========
+function initPokedex() {
+  const grid = document.getElementById('pokedex-grid');
+  grid.innerHTML = '';
+  PIKMIN_LIST.forEach(p => {
+    const unlocked = G.unlockedPikmin.includes(p.id);
+    const friend = G.pikminFriendship[p.id] || 0;
+    const card = document.createElement('div');
+    card.className = 'pikmin-card' + (unlocked?'':' locked');
+    card.innerHTML = `
+      <div class="big-emoji">${p.emoji}</div>
+      <div class="pname">${unlocked ? p.name : '???'}</div>
+      <div class="pfriend">${unlocked ? `好感度 ${friend}%` : p.rarity}</div>
+      <div class="friend-bar"><div class="friend-fill" style="width:${unlocked?friend:0}%"></div></div>
+    `;
+    if (unlocked) card.onclick = () => showPikminDetail(p);
+    grid.appendChild(card);
+  });
+}
+
+function showPikminDetail(p) {
+  const friend = G.pikminFriendship[p.id] || 0;
+  document.getElementById('pikmin-detail-title').innerHTML = `${p.emoji} ${p.name} <button class="panel-close" onclick="closePanel('panel-pikmin')">✕</button>`;
+  document.getElementById('pikmin-detail-body').innerHTML = `
+    <div style="text-align:center;padding:20px 0">
+      <div style="font-size:72px;margin-bottom:8px">${p.emoji}</div>
+      <div style="font-size:12px;padding:4px 12px;border-radius:20px;display:inline-block;background:rgba(76,175,80,0.2);color:var(--accent);margin-bottom:12px">${p.rarity}</div>
+      <p style="font-size:14px;color:var(--text-muted);margin-bottom:16px">${p.desc}</p>
+    </div>
+    <div style="background:var(--surface);border-radius:12px;padding:16px;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+        <span style="font-size:13px;color:var(--text-muted)">好感度</span>
+        <span style="font-size:13px;font-weight:600;color:var(--accent)">${friend} / 100</span>
+      </div>
+      <div class="friend-bar" style="height:8px"><div class="friend-fill" style="width:${friend}%"></div></div>
+      ${friend>=100?'<div style="color:var(--gold);font-size:12px;margin-top:6px;text-align:center">🌸 已開花！</div>':''}
+    </div>
+    <button class="btn-attack" style="background:linear-gradient(135deg,#4caf50,#1b5e20)" onclick="feedPikmin('${p.id}')">🌿 餵食 (+10 好感度)</button>
+  `;
+  closePanel('panel-pokedex');
+  openPanel('panel-pikmin');
+}
+
+function feedPikmin(id) {
+  G.pikminFriendship[id] = Math.min(100, (G.pikminFriendship[id]||0) + 10);
+  save();
+  const p = PIKMIN_LIST.find(x=>x.id===id);
+  showToast(`${p.emoji} 好感度 +10！`);
+  showPikminDetail(p);
+}
+
+// ========== BOSS ==========
+function updateBossUI() {
+  const pct = G.bossHP / BOSS_MAX * 100;
+  document.getElementById('boss-hp-fill').style.width = pct + '%';
+  document.getElementById('boss-hp-text').textContent = `${G.bossHP.toLocaleString()} / ${BOSS_MAX.toLocaleString()}`;
+  document.getElementById('atk-power').textContent = Math.round(100 * vipMult());
+}
+
+function attackBoss() {
+  const dmg = Math.round(100 * vipMult());
+  G.bossHP = Math.max(0, G.bossHP - dmg);
+  const el = document.getElementById('boss-emoji');
+  el.classList.add('damage-flash');
+  setTimeout(()=>el.classList.remove('damage-flash'),300);
+  if (G.bossHP <= 0) {
+    G.bossHP = BOSS_MAX;
+    const reward = Math.round(5000 * vipMult());
+    G.gold += reward;
+    document.getElementById('boss-reward-text').textContent = `🏆 Boss 擊倒！+${reward.toLocaleString()} 🪙`;
+    showToast(`🏆 Boss 擊倒！獲得 ${reward.toLocaleString()} 金幣！`);
+    updateHUD();
+  } else {
+    document.getElementById('boss-reward-text').textContent = `⚔️ 造成 ${dmg} 傷害`;
+  }
+  updateBossUI(); save();
+}
+
+// ========== QUIZ ==========
+function startQuiz() {
+  G.quizQuestions = [...QUESTIONS].sort(()=>Math.random()-0.5).slice(0,5);
+  G.quizIndex = 0; G.quizScore = 0; G.quizActive = true;
+  showQuestion();
+}
+
+function showQuestion() {
+  const body = document.getElementById('quiz-body');
+  if (G.quizIndex >= G.quizQuestions.length) {
+    const won = G.quizScore >= 3;
+    body.innerHTML = `
+      <div style="text-align:center;padding:20px 0">
+        <div style="font-size:48px">${won?'🌟':'😅'}</div>
+        <div class="quiz-score">${G.quizScore} / 5</div>
+        <p style="color:var(--text-muted);margin-bottom:20px">${won?'答對 '+G.quizScore+' 題！獲得 Pikmin 獎勵！':'加油！再試一次！'}</p>
+        ${won?`<p style="color:var(--gold);margin-bottom:16px">+${Math.round(200*vipMult())} 🪙</p>`:''}
+        <button class="btn-attack" style="background:linear-gradient(135deg,#4caf50,#1b5e20)" onclick="startQuiz()">再玩一次</button>
+      </div>`;
+    if (won) {
+      G.gold += Math.round(200 * vipMult());
+      spawnRandomPikmin();
+      updateHUD(); save();
+    }
+    return;
+  }
+  const q = G.quizQuestions[G.quizIndex];
+  body.innerHTML = `
+    <div style="font-size:12px;color:var(--text-muted);margin-top:8px">題目 ${G.quizIndex+1} / 5</div>
+    <div class="quiz-question">${q.q}</div>
+    <div class="quiz-answers">
+      ${q.a.map((ans,i)=>`<button class="btn-answer" onclick="submitAnswer(${i})">${ans}</button>`).join('')}
+    </div>`;
+}
+
+function submitAnswer(idx) {
+  const q = G.quizQuestions[G.quizIndex];
+  const btns = document.querySelectorAll('.btn-answer');
+  btns[q.c].classList.add('correct');
+  if (idx !== q.c) btns[idx].classList.add('wrong');
+  else G.quizScore++;
+  btns.forEach(b=>b.disabled=true);
+  setTimeout(()=>{ G.quizIndex++; showQuestion(); }, 900);
+}
+
+// ========== SHOP ==========
+function buyVIP(level, price) {
+  if (G.gold < price) { showToast('💰 金幣不足！'); return; }
+  if (G.vip >= level) { showToast('您已擁有此 VIP'); return; }
+  G.gold -= price; G.vip = level;
+  updateHUD(); save();
+  showToast(`🌟 VIP ${level} 啟動！倍率提升！`);
+}
+
+function buyItem(type, price) {
+  if (G.gold < price) { showToast('💰 金幣不足！'); return; }
+  G.gold -= price;
+  if (type === 'goldseed') {
+    showToast('🌻 金種子使用！稀有 Pikmin 出現！');
+    spawnRandomPikmin();
+  }
+  updateHUD(); save();
+}
+
+function redeemCode() {
+  const code = document.getElementById('code-input').value.trim();
+  const codes = {
+    'VIP0102': () => { G.gold += 60000; return '🎁 兌換成功！獲得 60,000 金幣！'; },
+    'PIKMIN2024': () => { G.gold += 10000; return '🎁 兌換成功！獲得 10,000 金幣！'; },
+    'WELCOME': () => { G.gold += 5000; return '🎁 歡迎禮包！獲得 5,000 金幣！'; },
+  };
+  if (codes[code]) {
+    const msg = codes[code]();
+    updateHUD(); save();
+    showToast(msg);
+    document.getElementById('code-input').value = '';
+  } else {
+    showToast('❌ 無效的兌換碼');
+  }
+}
+
+// ========== DAILY ==========
+function initDaily() {
+  const today = new Date().toDateString();
+  const claimed = G.lastDaily === today;
+  const days = document.getElementById('daily-days');
+  days.innerHTML = '';
+  const rewards = ['🪙','🌱','⭐','💎','🌟','🎁','👑'];
+  for (let i=0;i<7;i++) {
+    const chip = document.createElement('div');
+    chip.className = 'day-chip' + (i < G.streakDay%7 ? ' claimed' : '');
+    chip.innerHTML = `<div class="reward-icon">${rewards[i]}</div><div>Day ${i+1}</div>`;
+    days.appendChild(chip);
+  }
+  document.getElementById('btn-claim').disabled = claimed;
+  document.getElementById('btn-claim').textContent = claimed ? '明天再來 ✓' : '領取今日獎勵';
+}
+
+function claimDaily() {
+  const today = new Date().toDateString();
+  if (G.lastDaily === today) return;
+  G.lastDaily = today;
+  G.streakDay++;
+  const reward = Math.round(1000 * (G.vip > 0 ? 2 : 1) * (1 + G.streakDay * 0.1));
+  G.gold += reward;
+  updateHUD(); save(); initDaily();
+  showToast(`🎁 每日獎勵！+${reward.toLocaleString()} 🪙 (第${G.streakDay}天)`);
+}
+
+// ========== GUILD ==========
+function joinGuild(name) {
+  G.guildName = name; save();
+  showToast(`🏰 加入公會：${name}！`);
+}
+
+// ========== PANELS ==========
+function openPanel(id) { document.getElementById(id).classList.remove('hidden'); }
+function closePanel(id) { document.getElementById(id).classList.add('hidden'); }
+
+// Close panel on backdrop click
+document.querySelectorAll('.panel').forEach(p => {
+  p.addEventListener('click', e => { if (e.target === p) p.classList.add('hidden'); });
+});
+
+// ========== TOAST ==========
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>t.classList.remove('show'), 2500);
+}
+
+// ========== AUTO SPAWN ==========
+setInterval(() => {
+  const field = document.getElementById('pikmin-field');
+  if (!document.getElementById('screen-game').classList.contains('hidden')) {
+    if (field.children.length < 3 && Math.random() > 0.4) spawnRandomPikmin();
+  }
+}, 8000);
+
+// ========== STEP SIMULATION (for testing without GPS) ==========
+document.getElementById('btn-ar').addEventListener('dblclick', () => {
+  G.steps += 30; G.gold += Math.floor(60 * vipMult());
+  updateHUD(); save();
+  spawnRandomPikmin();
+  showToast('👟 +30 步數！(測試模式)');
+});
+
+// ========== SERVICE WORKER ==========
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
